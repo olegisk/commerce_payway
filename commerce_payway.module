@@ -2,7 +2,7 @@
 
 /**
  * @file
- * Implements Payway API payment services for use in Drupal Commerce.
+ * Implements Payway REST API payment services for use in Drupal Commerce.
  */
 
 /**
@@ -11,12 +11,12 @@
 function commerce_payway_menu() {
   $items = array();
 
-  // Add a menu item for capturing authorizations.
-  $items['admin/commerce/orders/%commerce_order/payment/%commerce_payment_transaction/authnet-aim-capture'] = array(
-    'title' => 'Capture',
+  // Add a menu item to payment transactions that can be refunded.
+  $items['admin/commerce/orders/%commerce_order/payment/%commerce_payment_transaction/commerce-payway-refund'] = array(
+    'title' => 'Refund',
     'page callback' => 'drupal_get_form',
-    'page arguments' => array('commerce_payway_api_capture_form', 3, 5),
-    'access callback' => 'commerce_payway_api_capture_access',
+    'page arguments' => array('commerce_payway_refund_form', 3, 5),
+    'access callback' => 'commerce_payway_refund_access',
     'access arguments' => array(3, 5),
     'type' => MENU_DEFAULT_LOCAL_TASK,
     'context' => MENU_CONTEXT_INLINE,
@@ -28,79 +28,95 @@ function commerce_payway_menu() {
 }
 
 /**
- * Determines access to the prior authorization capture form for Authorize.Net
- *   AIM credit card transactions.
- *
- * @param $order
- *   The order the transaction is on.
- * @param $transaction
- *   The payment transaction object to be captured.
- *
- * @return
- *   TRUE or FALSE indicating capture access.
+ * Access callback for processing returns.
  */
-function commerce_payway_aim_capture_access($order, $transaction) {
-  // Return FALSE if the transaction isn't for Authorize.Net AIM or isn't
-  // awaiting capture.
-  if ($transaction->payment_method != 'payway_api' || strtoupper($transaction->remote_status) != 'AUTH_ONLY') {
+function commerce_payway_refund_access($order, $transaction) {
+  // Refund don't implemented yet
+  return FALSE;
+
+  // Don't allow refunds on non-payway transactions.
+  if ($transaction->payment_method != 'commerce_payway') {
     return FALSE;
   }
 
-  // Allow access if the user can update payments on this order.
-  return commerce_payment_transaction_access('update', $order, $transaction);
+  $data = json_decode($transaction->data, TRUE);
+  if (!$data['isRefundable']) {
+    return FALSE;
+  }
+
+  return commerce_payment_transaction_access('update', $transaction);
 }
 
 /**
  * Implements hook_commerce_payment_method_info().
  */
 function commerce_payway_commerce_payment_method_info() {
+  $settings = NULL;
   $payment_methods = array();
   $path = base_path() . drupal_get_path('module', 'commerce_payway');
-  $payment_methods['payway_api'] = array(
-    'base' => 'commerce_payway_api',
-    'title' => t('Westpac PayWay API - Credit Card'),
-    'short_title' => t('PayWay API'),
-    'display_title' => t('Credit card') . '<div class="commerce-paypal-icons"><span class="label">Includes:</span><img src="'. $path .'/images/visa.gif" alt="Visa" title="Visa" class="commerce-paypal-icon" /> <img src="'. $path .'/images/mastercard.gif" alt="Mastercard" title="Mastercard" class="commerce-paypal-icon" /></div>',
-    'description' => t('Integrates Wespac Payway API for card not present CC transactions.'),
+  $payment_methods['commerce_payway'] = array(
+    'base' => 'commerce_payway',
+    'title' => t('Westpac PayWay REST API - Credit Card'),
+    'short_title' => t('PayWay REST API'),
+    'display_title' => t('Credit card') . '<div class="commerce-paypal-icons"><span class="label">Includes:</span><img src="' . $path . '/images/visa.gif" alt="Visa" title="Visa" class="commerce-paypal-icon" /> <img src="' . $path . '/images/mastercard.gif" alt="Mastercard" title="Mastercard" class="commerce-paypal-icon" /></div>',
+    'description' => t('Integrates Wespac PayWay REST API for card not present CC transactions.'),
+    'active' => FALSE,
+    'terminal' => FALSE,
+    'offsite' => FALSE,
   );
+
+  $cardonfile = _commerce_payway_load_setting('cardonfile');
+  if ($cardonfile) {
+    $payment_methods['commerce_payway']['cardonfile'] = array(
+      'create form callback' => 'commerce_payway_cardonfile_create_form',
+      //'create callback' => 'commerce_stripe_cardonfile_create',
+      //'update callback' => 'commerce_stripe_cardonfile_update',
+    );
+  }
 
   return $payment_methods;
 }
 
 /**
- * Payment method callback: settings form.
+ * Payment method settings form.
+ *
+ * @param $settings
+ *   Default settings provided from rules
+ *
+ * @return array
+ *   Settings form array
  */
-function commerce_payway_api_settings_form($settings = NULL) {
+function commerce_payway_settings_form($settings) {
   $form = array();
 
   // Merge default settings into the stored settings array.
   $settings = (array) $settings + array(
-    'merchant' => '',
-    'username' => '',
-    'password' => '',
-    'txn_type' => COMMERCE_CREDIT_AUTH_CAPTURE,
-    'log' => array('request' => '0', 'response' => '0'),
-  );
+      'publishable_api_key' => '',
+      'secret_api_key' => '',
+      'txn_type' => COMMERCE_CREDIT_CAPTURE_ONLY,
+      'merchant_id' => 'TEST',
+      'cardonfile' => 0,
+    );
 
-  $form['merchant'] = array(
+  $form['publishable_api_key'] = array(
     '#type' => 'textfield',
-    '#title' => t('PayWay Merchant ID'),
-    '#description' => t('Your PayWay Merchant ID. Use "TEST" for testing.'),
-    '#default_value' => $settings['merchant'],
+    '#title' => t('PayWay Publishable Api Key'),
+    '#description' => t('Your PayWay Publishable Api Key'),
+    '#default_value' => $settings['publishable_api_key'],
     '#required' => TRUE,
   );
-  $form['username'] = array(
+  $form['secret_api_key'] = array(
     '#type' => 'textfield',
-    '#title' => t('PayWay Username'),
-    '#description' => t('The "Login Name" of the PayWay User you wish to process payments with.'),
-    '#default_value' => $settings['username'],
+    '#title' => t('PayWay Secret Api Key'),
+    '#description' => t('Your PayWay Secret Api Key'),
+    '#default_value' => $settings['secret_api_key'],
     '#required' => TRUE,
   );
-  $form['password'] = array(
+  $form['merchant_id'] = array(
     '#type' => 'textfield',
-    '#title' => t('PayWay Password'),
-    '#description' => t('The password of the PayWay User you wish to process payments with.'),
-    '#default_value' => $settings['password'],
+    '#title' => t('Merchant ID'),
+    '#description' => t('Merchant ID. Use "TEST" for testing'),
+    '#default_value' => $settings['merchant_id'],
     '#required' => TRUE,
   );
 
@@ -109,19 +125,28 @@ function commerce_payway_api_settings_form($settings = NULL) {
     '#title' => t('Default credit card transaction type'),
     '#description' => t('The default will be used to process transactions during checkout.'),
     '#options' => array(
-      COMMERCE_CREDIT_AUTH_CAPTURE => t('Authorization and capture'),
+      COMMERCE_CREDIT_AUTH_ONLY => t('Authorization'),
+      COMMERCE_CREDIT_CAPTURE_ONLY => t('Capture'),
     ),
     '#default_value' => $settings['txn_type'],
+    '#required' => TRUE,
   );
-  $form['log'] = array(
-    '#type' => 'checkboxes',
-    '#title' => t('Log the following messages for debugging'),
-    '#options' => array(
-      'request' => t('API request messages'),
-      'response' => t('API response messages'),
-    ),
-    '#default_value' => $settings['log'],
-  );
+
+  if (module_exists('commerce_cardonfile')) {
+    $form['cardonfile'] = array(
+      '#type' => 'checkbox',
+      '#title' => t('Enable Card on File functionality.'),
+      '#default_value' => isset($settings['cardonfile']) ? $settings['cardonfile'] : 0,
+    );
+  }
+  else {
+    $form['cardonfile'] = array(
+      '#type' => 'markup',
+      '#markup' => t('To enable Card on File functionality download and install the <a href="@url">Card on File</a> module.',
+        array('@url' => 'https://www.drupal.org/project/commerce_cardonfile')
+      ),
+    );
+  }
 
   return $form;
 }
@@ -129,16 +154,27 @@ function commerce_payway_api_settings_form($settings = NULL) {
 /**
  * Payment method callback: checkout form.
  */
-function commerce_payway_api_submit_form($payment_method, $pane_values, $checkout_pane, $order) {
+function commerce_payway_submit_form($payment_method, $pane_values, $checkout_pane, $order) {
+  // @todo Credit Card Form
   module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');
-  $form = commerce_payment_credit_card_form(array('code' => ''));
+
+  $credit_card_fields = array(
+    'owner' => '',
+    'number' => '',
+    'exp_month' => '',
+    'exp_year' => '',
+    'code' => '',
+  );
+
+  $form = commerce_payment_credit_card_form($credit_card_fields);
+
   return $form;
 }
 
 /**
  * Payment method callback: checkout form validation.
  */
-function commerce_payway_api_submit_form_validate($payment_method, $pane_form, $pane_values, $order, $form_parents = array()) {
+function commerce_payway_submit_form_validate($payment_method, $pane_form, $pane_values, $order, $form_parents = array()) {
   module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');
 
   // Validate the credit card fields.
@@ -149,167 +185,357 @@ function commerce_payway_api_submit_form_validate($payment_method, $pane_form, $
   if (!commerce_payment_credit_card_validate($pane_values['credit_card'], $settings)) {
     return FALSE;
   }
+
+  return TRUE;
 }
 
 /**
  * Payment method callback: checkout form submission.
  */
-function commerce_payway_api_submit_form_submit($payment_method, $pane_form, $pane_values, $order, $charge) {
-  $requestParameters = array();
+function commerce_payway_submit_form_submit($payment_method, $pane_form, $pane_values, $order, $charge) {
+  $publishable_api_key = _commerce_payway_load_setting('publishable_api_key');
+  $secret_api_key = _commerce_payway_load_setting('secret_api_key');
+  $merchant_id = _commerce_payway_load_setting('merchant_id');
+  $txn_type = _commerce_payway_load_setting('txn_type');
 
-  // Credit card details
+  // Create Single use token
+  $data = array(
+    'paymentMethod' => 'creditCard',
+    'cardNumber' => $pane_values['credit_card']['number'],
+    'expiryDateMonth' => $pane_values['credit_card']['exp_month'],
+    'expiryDateYear' => $pane_values['credit_card']['exp_year'] - 2000,
+    'cvn' => $pane_values['credit_card']['code'],
+    'cardholderName' => $pane_values['credit_card']['owner'],
+  );
 
-  $cardExpiryMonth = (strlen($pane_values['credit_card']['exp_month']) == 1) ? str_pad($pane_values['credit_card']['exp_month'], 2, '0', STR_PAD_LEFT) : $pane_values['credit_card']['exp_month'];
-  $cardExpiryYear = substr((string) $pane_values['credit_card']['exp_year'], 2);
-  
-  // Amount to charge
-  $orderAmountCents = number_format((float)$charge['amount'], 0, '.', '');
-
-  $transaction = commerce_payment_transaction_new('payway_api', $order->order_id);
-  $transaction->instance_id = $payment_method['instance_id'];
-  $transaction->amount = $charge['amount'];
-  $transaction->currency_code = $charge['currency_code'];
-  commerce_payment_transaction_save($transaction);
-
-  $requestParameters['customer.customerReferenceNumber'] = $order->uid;
-  $requestParameters['customer.orderNumber'] = $transaction->transaction_id;
-  $requestParameters['card.PAN'] = $pane_values['credit_card']['number'];
-  if (isset($pane_values['credit_card']['code'])) {
-    $requestParameters['card.CVN'] = $pane_values['credit_card']['code'];
-  }
-  $requestParameters['card.expiryYear'] = $cardExpiryYear;
-  $requestParameters['card.expiryMonth'] = $cardExpiryMonth;
-  $requestParameters['card.currency'] = 'AUD';
-  $requestParameters['order.amount'] = $orderAmountCents;
-
-  // Submit the request to Authorize.Net.
-  $response = commerce_payway_api_request($payment_method, $requestParameters);
-
-  // Check we got a response
-  if (empty($response)) {
-    // Supply some values which can be logged
-    $summaryCode = -1;
-    $responseCode = -1;
-    $description = 'No response from Gateway.';
-  } else {
-    // Get the required parameters from the response
-    $summaryCode = $response['response.summaryCode'];
-    $responseCode = $response['response.responseCode'];
-    $description = $response['response.text'];
-    $receiptNo = $response['response.receiptNo'];
+  $ch = curl_init();
+  curl_setopt($ch, CURLOPT_URL, 'https://api.payway.com.au/rest/v1/single-use-tokens');
+  curl_setopt($ch, CURLOPT_POST, TRUE);
+  curl_setopt($ch, CURLOPT_POSTFIELDS, _commerce_payway_build_query($data));
+  curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+    'Content-Type: application/x-www-form-urlencoded',
+    'Authorization: Basic ' . base64_encode($publishable_api_key)
+  ));
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  $result = curl_exec($ch);
+  $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+  curl_close($ch);
+  if ((int)($code/100) != 2) {
+    watchdog('payway', t('API Call @api. Response: @response', array('@api' => '/single-use-tokens', '@response' => var_export($result, true))));
+    $message = t('Failed to create Single use token');
+    drupal_set_message($message, 'error');
+    return FALSE;
   }
 
-  // Successful requests will have a summary code = 0
+  $result = json_decode($result, TRUE);
+  $singleUseTokenId = $result['singleUseTokenId'];
 
-  if ($summaryCode == 0) {
-    $message = t('Credit card charged: !amount', array('!amount' => $charge['amount']))
-              .'<br />'. t('PayWay receipt no.: @receipt', array('@receipt' => $receiptNo));
+  // Attempt to load the billing address from the order data.
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $field = field_info_field('commerce_customer_address');
+  $instance = field_info_instance('commerce_customer_profile', 'commerce_customer_address', 'billing');
+
+  $available_countries = NULL;
+  if (isset($form_state['input']['country'])) {
+    $available_countries = array($form_state['input']['country'] => NULL);
   }
-  // All failed requests will have a summary code != 0
-  else {
-    $message = t('Credit card declined: !amount', array('!amount' => $charge['amount']));
-  }
-  $message .= '<br />'. t('Gateway said: @responseCode - @response', array('@responseCode' => $responseCode, '@response' => $description));
 
-  // Prepare a transaction object to log the API response.
-  $transaction->remote_id = $receiptNo;
-  $transaction->payload[REQUEST_TIME] = $response;
-
-  // If we didn't get an approval response code...
-  if ($summaryCode != 0) {
-    // Create a failed transaction with the error message.
-    $transaction->status = COMMERCE_PAYMENT_STATUS_FAILURE;
-  }
-  else {
-    // Set the transaction status based on the type of transaction this was.
-    switch ($payment_method['settings']['txn_type']) {
-      case COMMERCE_CREDIT_AUTH_ONLY:
-        $transaction->status = COMMERCE_PAYMENT_STATUS_PENDING;
-        break;
-
-      case COMMERCE_CREDIT_AUTH_CAPTURE:
-        $transaction->status = COMMERCE_PAYMENT_STATUS_SUCCESS;
-        break;
+  $billing_address = addressfield_default_values($field, $instance, array($available_countries));
+  if (!empty($order->commerce_customer_billing)) {
+    if (!empty($order_wrapper->commerce_customer_billing->commerce_customer_address)) {
+      $billing_address = $order_wrapper->commerce_customer_billing->commerce_customer_address->value();
     }
   }
 
-  // Store the type of transaction in the remote status.
-  $transaction->remote_status = $responseCode;
+  // Create Customer
+  // @see https://www.payway.com.au/rest-docs/index.html#customer-model
+  $data = array(
+    'singleUseTokenId' => $singleUseTokenId,
+    'merchantId' => $merchant_id,
+    //'orderNumber' => $order->order_number,
+    'customerName' => !empty($billing_address['name_line']) ? $billing_address['name_line'] : '',
+    'emailAddress' => $order->mail,
+    //'sendEmailReceipts' => 'true',
+    //'phoneNumber' => '',
+    'street1' => !empty($billing_address['thoroughfare']) ? $billing_address['thoroughfare'] : '',
+    'street2' => !empty($billing_address['premise']) ? $billing_address['premise'] : '',
+    'cityName' => !empty($billing_address['locality']) ? $billing_address['locality'] : '',
+    'state' => !empty($billing_address['administrative_area']) ? $billing_address['administrative_area'] : '',
+    'postalCode' => !empty($billing_address['postal_code']) ? $billing_address['postal_code'] : '',
+    //'notes' => ''
+  );
 
-  $transaction->message = $message; //implode('<br />', $message);
+  $ch = curl_init();
+  curl_setopt($ch, CURLOPT_URL, 'https://api.payway.com.au/rest/v1/customers');
+  curl_setopt($ch, CURLOPT_POST, TRUE);
+  curl_setopt($ch, CURLOPT_POSTFIELDS, _commerce_payway_build_query($data));
+  curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+    'Content-Type: application/x-www-form-urlencoded',
+    'Authorization: Basic ' . base64_encode($secret_api_key)
+  ));
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  $result = curl_exec($ch);
+  $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+  curl_close($ch);
+  if ((int)($code/100) != 2) {
+    watchdog('payway', t('API Call @api. Response: @response', array('@api' => '/customers', '@response' => var_export($result, true))));
 
-  // Save the transaction information.
-  commerce_payment_transaction_save($transaction);
+    $message = '';
+    $result = json_decode($result, TRUE);
+    foreach ($result['data'] as $key => $value) {
+      $message .= $value['fieldName'] . ': ' . $value['message'] . "\n";
+    }
+    drupal_set_message($message, 'error');
+
+    return FALSE;
+  }
+
+  $customer = json_decode($result, TRUE);
+
+  // Save Customer
+  $id = db_insert('commerce_payway_customers')
+    ->fields(array(
+      'customer_id' => $customer['customerNumber'],
+      'user_id' => $order->uid,
+      'payment_method' => $customer['paymentSetup']['paymentMethod'],
+      'card_scheme' => $customer['paymentSetup']['creditCard']['cardScheme'],
+      'card_number' => $customer['paymentSetup']['creditCard']['cardNumber'],
+      'card_expire_month' => $customer['paymentSetup']['creditCard']['expiryDateMonth'],
+      'card_expire_year' => $customer['paymentSetup']['creditCard']['expiryDateYear'],
+      'card_holder_name' => $customer['paymentSetup']['creditCard']['cardholderName'],
+      'customer_data' => $result,
+      'creation_date' => date('Y-m-d H:i:s')
+    ))
+    ->execute();
+
+  // Do transaction
+  $data = array(
+    'customerNumber' => $customer['customerNumber'],
+    'transactionType' => $txn_type == COMMERCE_CREDIT_CAPTURE_ONLY ? 'payment' : 'preAuth',
+    'principalAmount' => number_format(($charge['amount'] / 100), 2, '.', ''),
+    'currency' => strtolower($charge['currency_code']),
+    'orderNumber' => $order->order_number
+  );
+
+  $ch = curl_init();
+  curl_setopt($ch, CURLOPT_URL, 'https://api.payway.com.au/rest/v1/transactions');
+  curl_setopt($ch, CURLOPT_POST, TRUE);
+  curl_setopt($ch, CURLOPT_POSTFIELDS, _commerce_payway_build_query($data));
+  curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+    'Content-Type: application/x-www-form-urlencoded',
+    'Authorization: Basic ' . base64_encode($secret_api_key)
+  ));
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  $result = curl_exec($ch);
+  $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+  curl_close($ch);
+  if ((int)($code/100) != 2) {
+    watchdog('payway', t('API Call @api. Response: @response', array('@api' => '/transactions', '@response' => var_export($result, true))));
+    $message = t('Failed to perform transaction');
+    drupal_set_message($message, 'error');
+    return FALSE;
+  }
+
+  $data = json_decode($result, TRUE);
+
+  $transaction = commerce_payment_transaction_new('commerce_payway', $order->order_id);
+  $transaction->instance_id = $payment_method['instance_id'];
+  $transaction->amount = $charge['amount'];
+  $transaction->currency_code = $charge['currency_code'];
+  $transaction->remote_id = $data['transactionId'];
+  $transaction->remote_status = $data['status'];
+  $transaction->data = $result;
+
+  switch ($data['status']) {
+    case 'approved':
+      switch ($data['transactionType']) {
+        case 'preAuth':
+          $message = t('Credit card authorized: !amount', array('!amount' => $charge['amount']))
+            . '<br />' . t('PayWay receipt no.: @receipt', array('@receipt' => $data['transactionId']));
+          $transaction->status = COMMERCE_PAYMENT_STATUS_PENDING;
+          $transaction->message = $message;
+          commerce_payment_transaction_save($transaction);
+
+          //$order->status = 'checkout_payment';
+          //commerce_order_save($order);
+          break;
+        case 'payment':
+          $message = t('Credit card charged: !amount', array('!amount' => $charge['amount']))
+            . '<br />' . t('PayWay receipt no.: @receipt', array('@receipt' => $data['transactionId']));
+          $transaction->status = COMMERCE_PAYMENT_STATUS_SUCCESS;
+          $transaction->message = $message;
+          commerce_payment_transaction_save($transaction);
+
+          //$order->status = 'checkout_complete';
+          //commerce_order_save($order);
+          break;
+        default:
+          //
+      }
+      break;
+    case 'pending':
+      $message = t('Credit card authorized: !amount', array('!amount' => $charge['amount']))
+        . '<br />' . t('PayWay receipt no.: @receipt', array('@receipt' => $data['transactionId']));
+      $transaction->status = COMMERCE_PAYMENT_STATUS_PENDING;
+      $transaction->message = $message;
+      commerce_payment_transaction_save($transaction);
+
+      //$order->status = 'checkout_review';
+      //commerce_order_save($order);
+      break;
+    case 'declined':
+      $message = t('Credit card declined: !amount', array('!amount' => $charge['amount']));
+      $transaction->status = COMMERCE_PAYMENT_STATUS_FAILURE;
+      $transaction->message = $message;
+      commerce_payment_transaction_save($transaction);
+
+      //$order->status = 'checkout_review';
+      //commerce_order_save($order);
+      break;
+    case 'suspended':
+      $message = t('A payment declined by Fraud Guard before processing.');
+      $transaction->status = COMMERCE_PAYMENT_STATUS_FAILURE;
+      $transaction->message = $message;
+      commerce_payment_transaction_save($transaction);
+
+      //$order->status = 'checkout_review';
+      //commerce_order_save($order);
+      break;
+    case 'voided':
+      $message = t('Originally approved, but then cancelled prior to settlement. Does not appear on your customer’s statement or form part of your settlement total.');
+      $transaction->status = COMMERCE_PAYMENT_STATUS_FAILURE;
+      $transaction->message = $message;
+      commerce_payment_transaction_save($transaction);
+      break;
+    default:
+      $message = t('Unknown transaction status.');
+      $transaction->status = COMMERCE_PAYMENT_STATUS_FAILURE;
+      $transaction->message = $message;
+      commerce_payment_transaction_save($transaction);
+      break;
+  }
 
   // If the payment failed, display an error and rebuild the form.
-  if ($summaryCode != 0) {
+  if ($transaction->status === COMMERCE_PAYMENT_STATUS_FAILURE) {
     drupal_set_message(t('We received an error while processing your payment, please enter you information again or try a different card.'), 'error');
     return FALSE;
   }
 }
 
 /**
- * Submits an Payway API request to Payway.
+ * Load Settings
+ * @param null $name
  *
- * @param $payment_method
- *   The payment method instance array associated with this API request.
+ * @return array
  */
-function commerce_payway_api_request($payment_method, $requestParameters = array()) {
-  // Initialise the PayWay API
-  $init = "";
+function _commerce_payway_load_settings($name = NULL) {
+  static $settings = array();
 
-  $init  = 'logDirectory='. variable_get('commerce_payway_log_dir', '/files/logs');
-  $ca_path = variable_get('commerce_payway_ca_file_path', '');
-  if (!(empty($ca_path))) {
-    $init .= '&caFile=' . $ca_path;
-  }
-  $cert_path = variable_get('commerce_payway_cert_file_path', '');
-  if (!(empty($cert_path))) {
-    $init .= '&certificateFile=' . $cert_path;
+  if (!empty($settings)) {
+    return $settings;
   }
 
-  module_load_include('inc', 'commerce_payway', '/includes/Qvalent_PayWayAPI');
-//  require_once drupal_get_path('module', 'commerce_payway') .'/includes/Qvalent_PayWayAPI.php';
-  $paywayAPI = new Qvalent_PayWayAPI();
-  $paywayAPI->initialise($init);
-    
-  // Load the Ubercart order
-//  $order = uc_order_load($order_id);
-  
-  // Request type
-  $orderECI = "SSL";
-  $orderType = "capture";
-  
-  // PayWay details
-  $customerUsername = $payment_method['settings']['username'];
-  $customerPassword = $payment_method['settings']['password'];
-  $customerMerchant = $payment_method['settings']['merchant'];
-  
-  // Unique order ID
-//  $orderNumber = $order_id;
-  
-  // PayWay parameters
-//  $requestParameters = array();
-  $requestParameters['order.type'] = $orderType;
-  $requestParameters['customer.username'] = $customerUsername;
-  $requestParameters['customer.password'] = $customerPassword;
-  $requestParameters['customer.merchant'] = $customerMerchant;
-  $requestParameters['order.ECI'] = $orderECI;
-  
-  // Build and send the request
-  $request = $paywayAPI->formatRequestParameters($requestParameters);
-  // Parse the response
-  $response = $paywayAPI->processCreditCard($request);
-  $responseParameters = $paywayAPI->parseResponseParameters($response);
-
-  if (!empty($payment_method['settings']['log']['request'])) {
-    // prevent the watchdog from saving the credit card.
-    watchdog('payway', 'REQUEST: ' . print_r(preg_replace('/card.PAN=(\d+)&/i', 'card.PAN=XXXX&', $request), TRUE));
-  }
-  if (!empty($payment_method['settings']['log']['response'])) {
-    watchdog('payway', 'RESPONSE: ' . print_r($response, TRUE));
+  if (commerce_payment_method_load('commerce_payway') && rules_config_load('commerce_payment_commerce_payway')) {
+    $commerce_payway_payment_method = commerce_payment_method_instance_load('commerce_payway|commerce_payment_commerce_payway');
   }
 
-  return $responseParameters;
+  if (isset($name) && rules_config_load('commerce_payment_commerce_payway')) {
+    $commerce_payway_payment_method = commerce_payment_method_instance_load('commerce_payway|commerce_payment_commerce_payway');
+  }
+
+  if (isset($commerce_payway_payment_method)) {
+    $settings = $commerce_payway_payment_method['settings'];
+  }
+
+  return $settings;
 }
 
+/**
+ * Load Settings (One)
+ * @param $name
+ * @param null $default_value
+ * @return mixed|null
+ */
+function _commerce_payway_load_setting($name, $default_value = NULL) {
+  $settings = _commerce_payway_load_settings($name);
+  return isset($settings[$name]) ? $settings[$name] : $default_value;
+}
+
+/**
+ * Build query string
+ * @param $data
+ *
+ * @return string
+ */
+function _commerce_payway_build_query($data) {
+  //$fields = http_build_query($data, '', '&');
+  $fields = '';
+  foreach ($data as $key => $value) {
+    $fields .= "{$key}={$value}&";
+  }
+  $fields = rtrim($fields, '&');
+  return $fields;
+}
+
+
+/**
+ * Card on file callback: create form
+ */
+function commerce_payway_cardonfile_create_form($form, &$form_state, $op, $card_data) {
+  // Pass along information to the validate and submit handlers.
+  $form_state['card_data'] = $card_data;
+  $form_state['op'] = $op;
+
+  $form += commerce_payway_submit_form(null, null, null, null);
+
+  $payment_method = commerce_payment_method_instance_load($card_data->instance_id);
+  $form['credit_card']['cardonfile_instance_default'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Use as default card for payments with %method', array('%method' => $payment_method['display_title'])),
+    '#default_value' => FALSE,
+  );
+
+  // Create a billing profile object and add the address form.
+  $profile = commerce_customer_profile_new('billing', $form_state['card']->uid);
+  $form_state['commerce_customer_profile'] = $profile;
+  $form['commerce_customer_profile'] = array();
+  field_attach_form('commerce_customer_profile', $profile, $form['commerce_customer_profile'], $form_state);
+
+  $form['commerce_customer_profile']['#weight'] = -1;
+
+  // Add a validation callback so that we can call field_attach functions.
+  $form['#validate'][] = 'commerce_payway_cardonfile_create_validate';
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Add card')
+  );
+
+  return $form;
+}
+
+/**
+ * Validation callback for card on file creation.
+ */
+function commerce_payway_cardonfile_create_validate($form, &$form_state) {
+  $profile = $form_state['commerce_customer_profile'];
+  field_attach_form_validate('commerce_customer_profile', $profile, $form['commerce_customer_profile'], $form_state);
+}
+
+function commerce_payway_cardonfile_create_form_submit($form, &$form_state) {
+  $card_data = $form_state['card_data'];
+  $payment_method = commerce_payment_method_instance_load($card_data->instance_id);
+  commerce_payway_cardonfile_create($form, $form_state, $payment_method, $card_data);
+  $form_state['redirect'] = 'user/' . $card_data->uid . '/cards';
+}
+
+/**
+ * Card on file callback: create
+ */
+function commerce_payway_cardonfile_create($form, &$form_state, $payment_method, $card_data) {
+  //$card = _commerce_payway_create_card($form_state['values']['stripe_token'], $card_data->uid, $payment_method);
+  //if (!$card) {
+  //  return;
+  //}
+  //_commerce_payway_save_cardonfile($card, $card_data->uid, $payment_method, $form_state['values']['credit_card']['cardonfile_instance_default']);
+}

@@ -1,0 +1,24 @@
+/* Entire form */
+div.payway-card {
+	/* */
+	display: none;
+}
+
+/* Labels */
+.payway-card label, .payway-card legend {
+	/* */
+}
+
+/* Input fields */
+.payway-card input, .payway-card select {
+	/* */
+}
+
+/* Help Button */
+.payway-card button.payway-csc-help {
+	/* */
+}
+
+.payway-creditcard {
+	//
+}

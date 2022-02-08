@@ -27,9 +27,95 @@ function commerce_payway_requirements($phase) {
   if (!$has_curl) {
     $requirements['commerce_payway_curl'] += array(
       'severity' => REQUIREMENT_ERROR,
-      'description' => $t("Authorize.Net requires the PHP <a href='!curl_url'>cURL</a> library.", array('!curl_url' => 'http://php.net/manual/en/curl.setup.php')),
+      'description' => $t("PayWay requires the PHP <a href='!curl_url'>cURL</a> library.", array('!curl_url' => 'http://php.net/manual/en/curl.setup.php')),
     );
   }
 
   return $requirements;
+}
+
+/**
+ * Implementation of hook_schema().
+ */
+function commerce_payway_schema() {
+  $schema = array();
+  $schema['commerce_payway_customers'] = array(
+    'fields' => array(
+      'id' => array(
+        'description' => 'Primary key',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'customer_id' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'PayWay Customer Id',
+      ),
+      'user_id' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Drupal User Id',
+      ),
+      'payment_method' => array(
+        'description' => 'PayWay Payment Method',
+        'type' => 'text',
+      ),
+      'card_scheme' => array(
+        'description' => 'Credit Card Type',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'card_number' => array(
+        'description' => 'Masked Credit Card Number',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'card_expire_month' => array(
+        'description' => 'Credit Card Expire Date Month',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'card_expire_year' => array(
+        'description' => 'Credit Card Expire Date Year',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'card_holder_name' => array(
+        'description' => 'Credit Card Holder Name',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'customer_data' => array(
+        'description' => 'Serialized Data in JSON',
+        'type' => 'text',
+      ),
+      'creation_date' => array(
+        'description' => 'Creation Date',
+        'type' => 'datetime',
+        'mysql_type' => 'DATETIME'
+      ),
+    ),
+    'primary key' => array('id'),
+    'unique keys' => array(
+      'customer_id' => array('customer_id'),
+    ),
+    'indexes' => array(
+      'user_id' => array('user_id'),
+    ),
+  );
+
+  return $schema;
 }
